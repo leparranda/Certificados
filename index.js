@@ -14,16 +14,27 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // NUEVO ENDPOINT - Solo recibe datos JSON (sin archivo de plantilla)
 app.post("/generar-desde-datos", (req, res) => {
+  console.log("Body recibido:", JSON.stringify(req.body, null, 2));
+  
   const { data } = req.body;
+  
+  if (!data) {
+    console.error("No se recibió el campo 'data'");
+    return res.status(400).json({ error: "Campo 'data' requerido" });
+  }
 
   console.log("Generando certificado para:", data.nombre);
 
   try {
-    // Leer la plantilla desde el servidor
-    const templatePath = path.join(__dirname, "Certificado.docx");
+    // Leer la plantilla desde el servidor (buscar con diferentes nombres)
+    let templatePath = path.join(__dirname, "Certificado.docx");
     
     if (!fs.existsSync(templatePath)) {
-      console.error("Plantilla no encontrada en:", templatePath);
+      templatePath = path.join(__dirname, "certificado.docx");
+    }
+    
+    if (!fs.existsSync(templatePath)) {
+      console.error("Plantilla no encontrada. Archivos disponibles:", fs.readdirSync(__dirname));
       return res.status(500).json({ error: "Plantilla no encontrada en el servidor" });
     }
 
@@ -88,8 +99,13 @@ app.post("/generar", upload.single("plantilla"), (req, res) => {
 
 // Endpoint de prueba para verificar que la plantilla existe
 app.get("/verificar-plantilla", (req, res) => {
-  const templatePath = path.join(__dirname, "Certificado.docx");
-  const exists = fs.existsSync(templatePath);
+  let templatePath = path.join(__dirname, "Certificado.docx");
+  let exists = fs.existsSync(templatePath);
+  
+  if (!exists) {
+    templatePath = path.join(__dirname, "certificado.docx");
+    exists = fs.existsSync(templatePath);
+  }
   
   res.json({
     plantilla_existe: exists,
@@ -103,11 +119,16 @@ app.listen(PORT, () => {
   console.log(`Servidor escuchando en http://localhost:${PORT}`);
   
   // Verificar que la plantilla existe al iniciar
-  const templatePath = path.join(__dirname, "Certificado.docx");
+  let templatePath = path.join(__dirname, "Certificado.docx");
   if (fs.existsSync(templatePath)) {
     console.log("✅ Plantilla Certificado.docx encontrada");
   } else {
-    console.log("❌ Plantilla Certificado.docx NO encontrada");
-    console.log("Archivos en directorio:", fs.readdirSync(__dirname));
+    templatePath = path.join(__dirname, "certificado.docx");
+    if (fs.existsSync(templatePath)) {
+      console.log("✅ Plantilla certificado.docx encontrada");
+    } else {
+      console.log("❌ Plantilla NO encontrada");
+      console.log("Archivos en directorio:", fs.readdirSync(__dirname));
+    }
   }
 });
