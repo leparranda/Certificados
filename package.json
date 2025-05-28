@@ -2,7 +2,7 @@
   "name": "certificados-api",
   "version": "1.0.0",
   "description": "API para generar certificados en DOCX y PDF",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
@@ -12,12 +12,7 @@
     "multer": "^2.0.0-beta.1",
     "pizzip": "^3.1.4",
     "docxtemplater": "^3.47.0",
-    "cors": "^2.8.5",
-    "puppeteer": "^22.8.2",
-    "mammoth": "^1.7.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "cors": "^2.8.5"
   },
   "engines": {
     "node": ">=18.0.0"
