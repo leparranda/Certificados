@@ -5,8 +5,10 @@ const Docxtemplater = require("docxtemplater");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const puppeteer = require("puppeteer");
-const mammoth = require("mammoth");
+const { exec } = require("child_process");
+const { promisify } = require("util");
+
+const execAsync = promisify(exec);
 
 const app = express();
 app.use(cors());
@@ -14,78 +16,53 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Configuración de Puppeteer para Railway
-const getPuppeteerConfig = () => {
-  if (process.env.RAILWAY_ENVIRONMENT) {
-    return {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process'
-      ]
-    };
-  }
-  return { headless: true };
-};
-
-// Función para convertir DOCX a PDF usando Puppeteer
-async function convertDocxToPdf(docxBuffer) {
-  let browser;
+// Función para convertir DOCX a PDF usando LibreOffice
+async function convertDocxToPdfWithLibreOffice(docxBuffer) {
+  const tempDir = path.join(__dirname, 'temp');
+  const timestamp = Date.now();
+  const inputPath = path.join(tempDir, `doc_${timestamp}.docx`);
+  const outputPath = path.join(tempDir, `doc_${timestamp}.pdf`);
+  
   try {
-    // Primero convertir DOCX a HTML
-    const htmlResult = await mammoth.convertToHtml({ buffer: docxBuffer });
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <style>
-          body { 
-            font-family: Arial, sans-serif; 
-            margin: 40px;
-            line-height: 1.6;
-          }
-          .certificate {
-            text-align: center;
-            padding: 20px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="certificate">
-          ${htmlResult.value}
-        </div>
-      </body>
-      </html>
-    `;
+    // Crear directorio temporal si no existe
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
 
-    // Luego convertir HTML a PDF usando Puppeteer
-    browser = await puppeteer.launch(getPuppeteerConfig());
-    const page = await browser.newPage();
+    // Escribir el archivo DOCX temporal
+    fs.writeFileSync(inputPath, docxBuffer);
+
+    // Convertir usando LibreOffice
+    const command = `libreoffice --headless --convert-to pdf --outdir "${tempDir}" "${inputPath}"`;
+    console.log("Ejecutando comando:", command);
     
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-    
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: {
-        top: '20px',
-        right: '20px',
-        bottom: '20px',
-        left: '20px'
-      }
-    });
+    await execAsync(command);
+
+    // Leer el PDF generado
+    if (!fs.existsSync(outputPath)) {
+      throw new Error("LibreOffice no generó el archivo PDF");
+    }
+
+    const pdfBuffer = fs.readFileSync(outputPath);
+
+    // Limpiar archivos temporales
+    try {
+      fs.unlinkSync(inputPath);
+      fs.unlinkSync(outputPath);
+    } catch (cleanupError) {
+      console.warn("Error limpiando archivos temporales:", cleanupError.message);
+    }
 
     return pdfBuffer;
-  } finally {
-    if (browser) {
-      await browser.close();
+  } catch (error) {
+    // Limpiar archivos en caso de error
+    try {
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    } catch (cleanupError) {
+      console.warn("Error limpiando archivos tras fallo:", cleanupError.message);
     }
+    throw error;
   }
 }
 
@@ -135,8 +112,8 @@ app.post("/generar-desde-datos", async (req, res) => {
     // Si se solicita PDF, convertir el documento
     if (formato === 'pdf') {
       try {
-        console.log("Convirtiendo DOCX a PDF...");
-        buffer = await convertDocxToPdf(buffer);
+        console.log("Convirtiendo DOCX a PDF con LibreOffice...");
+        buffer = await convertDocxToPdfWithLibreOffice(buffer);
         contentType = "application/pdf";
         extension = "pdf";
         console.log("Conversión a PDF exitosa");
@@ -170,8 +147,12 @@ app.post("/generar-pdf", async (req, res) => {
   // Forzar formato PDF
   req.body.formato = 'pdf';
   
-  // Redirigir al endpoint principal
-  return app.handle(req, res);
+  // Llamar al endpoint principal manualmente
+  return app._router.handle({
+    ...req,
+    url: '/generar-desde-datos',
+    method: 'POST'
+  }, res);
 });
 
 // ENDPOINT ORIGINAL - Mantener para compatibilidad
@@ -196,7 +177,7 @@ app.post("/generar", upload.single("plantilla"), async (req, res) => {
 
     if (formato === 'pdf') {
       try {
-        buffer = await convertDocxToPdf(buffer);
+        buffer = await convertDocxToPdfWithLibreOffice(buffer);
         contentType = "application/pdf";
         extension = "pdf";
       } catch (conversionError) {
@@ -221,7 +202,7 @@ app.post("/generar", upload.single("plantilla"), async (req, res) => {
 });
 
 // Endpoint de verificación
-app.get("/verificar-plantilla", (req, res) => {
+app.get("/verificar-plantilla", async (req, res) => {
   let templatePath = path.join(__dirname, "Certificado.docx");
   let exists = fs.existsSync(templatePath);
   
@@ -230,21 +211,40 @@ app.get("/verificar-plantilla", (req, res) => {
     exists = fs.existsSync(templatePath);
   }
   
+  // Verificar LibreOffice
+  let libreofficeVersion = "No disponible";
+  try {
+    const { stdout } = await execAsync("libreoffice --version");
+    libreofficeVersion = stdout.trim();
+  } catch (error) {
+    console.warn("LibreOffice no disponible:", error.message);
+  }
+  
   res.json({
     plantilla_existe: exists,
     ruta: templatePath,
     archivos_en_directorio: fs.readdirSync(__dirname),
-    conversion_pdf: "Puppeteer disponible",
+    libreoffice_version: libreofficeVersion,
     entorno: process.env.RAILWAY_ENVIRONMENT ? "Railway" : "Local"
   });
 });
 
 // Health check
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
+  // Verificar LibreOffice
+  let libreofficeStatus = "No disponible";
+  try {
+    await execAsync("libreoffice --version");
+    libreofficeStatus = "Disponible";
+  } catch (error) {
+    libreofficeStatus = "Error: " + error.message;
+  }
+
   res.json({
     status: "OK",
     formatos_soportados: ["docx", "pdf"],
-    motor_conversion: "Puppeteer + Mammoth",
+    motor_conversion: "LibreOffice",
+    libreoffice_status: libreofficeStatus,
     entorno: process.env.RAILWAY_ENVIRONMENT ? "Railway" : "Local"
   });
 });
@@ -267,5 +267,5 @@ app.listen(PORT, () => {
     }
   }
   
-  console.log("🔧 Conversión PDF habilitada con Puppeteer");
+  console.log("🔧 Conversión PDF habilitada con LibreOffice");
 });
