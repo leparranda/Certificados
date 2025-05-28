@@ -1,12 +1,19 @@
 # Dockerfile
-FROM node:18-alpine
+FROM ubuntu:22.04
 
-# Instalar LibreOffice y dependencias
-RUN apk add --no-cache \
+# Evitar prompts interactivos
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instalar Node.js y LibreOffice
+RUN apt-get update && apt-get install -y \
+    curl \
     libreoffice \
-    ttf-dejavu \
-    fontconfig \
-    && fc-cache -f
+    fonts-dejavu \
+    fonts-liberation \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de la aplicación
 WORKDIR /app
