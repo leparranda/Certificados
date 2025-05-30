@@ -125,7 +125,7 @@ app.post("/generar-desde-datos", async (req, res) => {
       }
     }
 
-    const filename = `certificado_${data.nombre || 'generado'}.${extension}`.replace(/\s+/g, '_');
+    const filename = `Certificado_${data.identificacion || 'generado'}.${extension}`.replace(/\s+/g, '_');
 
     res.set({
       "Content-Type": contentType,
